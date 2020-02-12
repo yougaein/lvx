@@ -1,0 +1,1384 @@
+#!/usr/bin/env ruby
+
+
+require 'tz/debug2'
+require 'tz/fib'
+require 'tz/tty_str'
+
+
+class TimedLines
+	
+	class WinRange
+		def intialize it, w, h
+			@width = w
+			@height = h
+			@iterator = it
+			@fib = Fiber.current
+		end
+		def awake
+
+			@fib.awake
+		end
+		def winsz=
+		end
+		def up count = 1
+		end
+		def down count = 1
+		end
+		def pageUp count = 1
+		end
+		def pageDown count = 1
+		end
+		def home
+		end
+		def ed
+		end
+		def top
+		end
+		def each_line
+			
+		end
+		def redisp fp
+		end
+		def get_iterator isTop = true
+		end
+		def include? it, xpos
+		end
+		def set_iterator it, isTop
+		end
+		def hilight expr
+		end
+		def height= h
+		end
+		
+	end
+	class Iterator
+		def initialize lst
+			@list = lst
+		end
+		def fninished?
+		end
+		def item
+		end
+		def next
+		end
+		def pos
+		end
+		def pos= arg
+		end
+		def winrange w, h
+			WinRange.new self, w, h
+		end
+	end
+
+	def initialize
+		@ranges = []
+	end
+
+	def add t, ln, id = nil
+		rs = @ranges.select{|r| r.canInsert? (ln)}
+		doAdd t, ln, id
+		rs.each do |r|
+			r.awake
+		end
+	end
+	def doAdd t, ln, id
+		@
+	end
+	def rend
+	end
+	def search item
+		case item
+		when Time
+		when String
+		end
+	end
+end
+
+
+class Array
+	def repush item
+		delete item
+		push item
+	end
+end
+
+
+class Match
+	Tuple = Proc.new do |*args|
+		new *args
+	end
+	def initialize *args
+		@tuple = args
+	end
+	def === arr
+		if arr.size != @tuple.size
+			return false
+		else
+			@tuple.zip args |te, ae|
+				unless te === ae
+					return false
+				end
+			end
+			return true
+		end
+	end
+end
+
+
+class TTYBuff
+	attr_reader :width
+	def initialize buff, wz
+		@width = wz
+		@buff = buff
+	end
+	def get_tty_pos_from pos, twidth
+		i = @buff.size
+		if twidth < 0
+			twidth = -twidth
+			tw = 0
+			ptw = nil
+			i.downto 1 do |j|
+				tw += @buff[j - 1].tty_width
+				if tw > twidth
+					return j + 1, ptw
+				end
+				ptw = tw
+			end
+			return 0, ptw
+		else
+			tw = 0
+			ptw = nil
+			i.upto @buff.size - 1 do |j|
+				tw += @buff[j].tty_width
+				if tw > twidth
+					return j - 1, ptw
+				end
+				ptw = tw
+			end
+			return @buff.size - 1, ptw
+		end
+	end
+	def initTopPos
+		tp = get_tty_pos_from(@buff.size, -@tty_width)[0]
+		return tp, @buff.size
+	end
+	def top_norm topPos, editPos
+		ep1 = get_tty_pos_from(editPos, - 1)[0]
+		if topPos < ep1
+			return ep1
+		end
+		ep1 = get_tty_pos_from(editPos, - (@width - 2))[0]
+		if ep1 > topPos
+			return ep1
+		end
+	end
+end
+
+
+class LineEditor
+	attr_reader :shown
+	attr_reader :buff
+	def initialize fp, ypos, width
+		@fp = fp
+		@ypos = ypos
+		@witdh = witdh
+		@histCursol = -1
+		@buff = ""
+		@prompt = ""
+	end
+	def show prompt = nil, hist = []
+		@shown = true
+		if prompt
+			@prompt = prompt 
+			@fp.write @prompt.tty_alt
+			@fp.write " "
+		end
+		tbf = TTyBuff.new @buff, @witdh - (@prompt ? @prompt.tty_width + 1 : 0) 
+		@topPos, @editPos = tbf.initPos
+		cstart = @prompt.tty_width + 1
+		setEnd = ->{
+			@topPos, @editPos = tbf.initPos
+			redisp
+		}
+		setCursor = ->x,y{
+			@fp.write("\x1b[#{x};#{y}H")
+		}
+		normTop = ->{
+			tp = tbf.top_norm(@topPos, @editPos)
+			if @topPos != tp
+				@topPos = tp
+				redisp
+			else
+				setEditCurPos[]
+			end
+		}
+		slice = ->{
+			@buff.slice!(@editPos)
+		}
+		redisp = ->{
+			setCursor[cstart, @ypos]
+			i, w = tbf.get_tty_pos_from(@topPos, tbf.width)
+			@fp.write @buff[@topPos .. i].tty_alt
+			@fp.write " " * (@width - w)
+			setEditCurPos[]
+		}
+		setEditCurPos = ->{
+			setCursor[cstart + @buff.tty_len(@topPos .. @editPos), @ypos]
+		}
+		
+		setEnd[]
+		@hist = hist
+		@hist.push ""
+		@histMod = hist.clone
+		@histCur = hist.size - 1
+		redisp
+		loop do
+			b = ""
+			Fib.read @fp, b
+			b.tty_each_input do |c|
+				case c
+				when :INT
+					Process.kill :INT, $$
+				when :left
+					if 0 < @editPos
+						@editPos -= 1
+						normTop[]
+					end
+				when :right
+					if @editPos < @buff.size
+						@editPos += 1
+						normTop[]
+					end
+				when :home
+					if @topPos != 0
+						@topPos = 0
+						@editPos = 0
+						redisp
+					elsif @editPos != 0
+						@editPos = 0
+						setEditCurPos[]
+					end
+				when :end
+					if @editPos != @buff.size
+						@editPos = @buff.size
+						normTop[]
+					end
+				when :bs
+					if 0 < @editPos
+						@editPos -= 1
+						slice[]
+						normTop[]
+					end
+				when :del
+					if @editPos < -1
+						slice[]
+						normTop[]
+					end
+				when :up
+					if @histMod[@histCur] != @buff
+						@histMod[@histCur] = @buff.clone
+					end
+					if @hist[@histCur] != @buff
+						@buff.replace @hist[@histCur]
+						setEnd[]
+					else
+						if @histCur > 0
+							@histCur -= 1
+							@buff.replace @histMod[@histCur]
+							setEnd[]
+						end
+					end
+				when :down
+					if @buff != @hist[@histCur] || @buff == @histMod[@histCur]
+						if @histMod[@histCur] != @buff
+							@histMod[@histCur] = @buff.clone
+						end
+						if @histCur < @hist.size - 1
+							@histCur += 1
+							@buff.replace @histMod[@histCur]
+							setEnd[]
+						end
+					else # @buff == @histMod[@histCur] && @buff != @histMod[@histCur]
+						@buff.replace @histMod[@histCur]
+						setEnd[]
+					end
+				when :pageUp
+					if @histMod[@histCur] != @buff
+						@histMod[@histCur] = @buff.clone
+					end
+					@histCur = 0
+					@buff.replace @hist[0]
+					setEnd[]
+				when :pageDown
+					if @histMod[@histCur] != @buff
+						@histMod[@histCur] = @buff.clone
+					end
+					@histCur = @hist.size - 1
+					@buff.replace @histMod[-1]
+					setEnd[]
+				when :return
+					@hist.delete ""
+					@hist.delete @buff
+					@hist.push @buff
+					@shown = false
+					return
+				when :esc
+					if @histMod[@histCur] != @buff
+						@histMod[@histCur] = @buff.clone
+					end
+					if @hist[@histCur] != @buff
+						@buff.replace @hist[@histCur]
+					else
+						@buff = ""
+					end
+					setEnd[]
+				when String
+					if !@buffMod
+						@buffMod = true
+						if @histCur != @hist.size
+							@hist.insert(@histCur, @buff)
+						else
+							@hist.push @buff
+							@histCur = @hist.size - 1
+						end
+					end
+					@buff.insert(@editPos, c)
+					@editPos += c.size
+					normTop[]
+				end
+			end
+		end
+	end
+	def hide
+		@shown = false
+		
+	end
+	def buff= b
+		if buff != b
+			@buff.replace b
+			if @shown
+				redisp
+			end
+		end
+	end
+	def relocate ypos, width
+		if ypos != @ypos || width != @width
+			@ypos = ypos
+			@witdh = witdh
+			if @shown
+				redisp
+			end
+		end
+	end
+end
+
+
+class Pane
+	def initialize lines
+		if STDIN.tty?
+			tty = "/proc/#{$$}/fd/0".readlink
+			@fp = tty.open "w+"
+			wsz = @fp.winsz
+		else
+			raise Exception.new("not using tty")
+		end
+		@lines = lines
+		@lineEdit = LineEditor.new @fp, wsz.height - 1, wsz.width
+		Fib.spawn do
+			@range = lines.rend.winrange wsz.width, wsz.height
+			loop do
+				@range.redisp @fp
+				Fib.sleep
+			end
+		end
+		trap :WINCH do
+			wsz = @fp.winsz
+			@range.winsz = wsz
+			@lineEdit.relocate wsz.height - 1, wsz.width
+		end
+		Fib.spawn do
+			search = Proc.new do |toSearch, m| #true, forward ; false, backward
+				it, xpos = @line.search toSearch, @range.get_iterator(m), m
+				if it
+					if !@range.include? it, xpos
+						@range.set_iterator(it, m)
+					end
+					@range.hilight toSearch
+					@lineEdit.hide
+					@range.height += 1
+				else
+					@lineEdit.buff = "expression '#{toSearch}' not found."
+				end
+			end
+			sHist = []
+			tHist = []
+			getHist = Proc.new do |cmd|
+				case cmd
+				when "/", "?"
+					sHist
+				when ":"
+					tHist
+				end
+			end
+			loop do
+				Fib.read @fp do |buff|
+					if @lineEdit.shown
+						@lineEdit.hide
+						@range.height += 1
+					end
+					buff.tty_each_input do |key|
+					case key
+					when :up
+						@range.up
+					when :down
+						@range.down
+					when :pageUp
+						@range.pageUp
+					when :pageDown
+						@range.pageDown
+					when :home
+						@range.home
+					when :ed
+						@range.ed
+					when :'^f', :f3
+						search.call :top
+					when :'^g', :F3
+						search.call :bottom
+					when :"^Z"
+						
+					when :"^z"
+						
+					when :":", :"/", :"?"
+						@range.height -= 1
+						case @lineEdit.show(key, getHist.call(key))
+						when :return
+							case @lineEdit.buff[0]
+							when ":"
+								toSearch = interpretTime @lineEdit.buff[1..-1]
+								if toSearch
+									tHist.repush @lineEdit.buff[1..-1]
+									search.call toSearch, @range.top.item.time >= toSearch
+								else
+									@lineEdit.buff = "expression '#{@lineEdit.buff[1..-1]}' is not a time."
+								end
+							when /\//, /\?/
+								if @lineEdit.buff.size > 1
+									sHist.repush @lineEdit.buff[1..-1]
+									toSearch = sHist[-1]
+									search.call toSearch, $& == "/"
+								end
+							end
+						when :esc
+							@range.height += 1
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+
+class TZC_ < Object
+	require 'binding_of_caller'
+	def method_missing name, *args, &bl
+		b = Kernel.binding.of_caller(1)
+		l = eval("local_variables", b)
+		if l.include(name) && (n = eval(name.to_s, b)).is_a? Proc
+			return n.curry.call *args
+		end
+		s = eval("self", b)
+		if s.respond_to? name
+			return s.method(name).to_proc.curry
+		elsif Kernel.respond_to? name
+			return Kernel.method(name).to_proc.curry
+		else
+			eval(name.to_s).call *args, &bl
+		end
+	end
+end
+TZC = TZC_.new
+
+
+class LogItem
+	AllLogObjs = {}
+	def self.emerge *args
+		AllLogObjs[[self.class, args]] ||= self.class.new(*args)
+	end
+	AllLines = TimedLines.new
+	def initialize
+		@tLines = TimedLines.new
+		forward
+		backward
+	end
+	def addIt ln
+		t, ln = convFormat ln
+		@tLines.add t, ln
+		AllLines.add t, ln, self
+	end
+	def forward
+		if respond_to? :getForward
+#			p
+			Fib.spawn do
+#				p
+				getForward &TZC.addIt
+			end
+		end
+	end
+	def backward
+		if respond_to? :getBackward
+#			p
+			Fib.spawn do
+#				p
+				getBackward &TZC.addIt
+				@backwardFinished = true
+			end
+		end
+	end
+	def each_log
+		it = @tLines.start
+		while !@backwardFinished
+			while !it.finished?
+				yield it.item
+				it.next
+			end
+			Fib.pass
+		end
+	end
+end
+
+
+def topen pth
+	require 'tpty'
+	pty = TPty.new
+	if !pty || !(fp = pty.master)
+		Exception.new("cannot allocate pseudo tty")
+	end
+	fq = pty.slave
+	fp.__defun__ :flush, nil
+	pid = fork do
+		fqFile = "/proc/#{$$}/fd/#{pty.slave.to_i}".readlink
+		fq.reopen fqFile
+		STDIN.reopen fq
+		STDOUT.reopen fq
+		STDERR.reopen fq
+		fq.close
+		fp.close
+		exec pth
+	end
+	Process.detach pid
+	fq.close
+	if block_given?
+		begin
+			yield fp
+		ensure
+			fp.close
+		end
+	else
+		fp
+	end
+end
+
+
+class JournalItem < LogItem
+	def initialize n
+		@name = n
+		super()
+	end
+	def getForward
+		topen "journalctl -f -u #{name}" do |fio|
+			Fib.get_line fio do |ln|
+				yield ln
+			end
+		end
+	end
+	def getBackward
+		IO.popen "journalctl -r -l --no-pager -u #{name}" do |bio|
+			Fib.get_line bio do |ln|
+				yield ln
+			end
+		end
+	end
+end
+
+
+class PipeItem < LogItem
+	def initialize f
+		@file = f
+		super()
+	end
+	def getForward
+		File.open f do |fio|
+			Fib.get_line fio do |ln|
+				yield ln
+			end
+		end
+	end
+end
+
+
+class AuditItem < FileItem
+	def initialize
+		super "/var/log/audit/audit.log"
+	end
+	def normalize ln
+		if ln =~ /^(.*audit\()(\d+\.\d+):/
+			ln.replace(Time.at($2.to_f).to_s + " : " + $1 + $')
+		end
+		ln
+	end
+end
+
+def set_first_dmsg_line
+	if !$fmsg
+		$fdmsg = Regexp.escape "/usr/bin/dmesg".readlines_p[0][/\[\s*[\d\.]+\]\s+(.*?)([^A-Za-z :-]|$)/, 1]
+	end
+end
+
+
+class MessageItem < FileItem
+	def normalize s
+		if s =~ /journal: Runtime journal is using/
+			@check = true
+			@t0 = Time.parse(s[0..14])
+		elsif @check && s =~ /journal: Journal stopped/
+			@check = false
+			t1 = Time.parse(s[0..14])
+			@diff = ((t1 - @t0 + 10) / 3600).to_i
+		end
+		if @diff
+			s.replace (Time.parse(s[0..14]) - 3600 * @diff).strftime("%b %e %T") + s[15..-1]
+		end
+		if s =~  /#{$fdmsg}/
+			@diff = nil
+		end
+		s
+	end
+	def initialize
+		set_first_dmsg_line
+		super "/var/log/messages"
+	end
+end
+
+
+class FileItem < LogItem
+	def initialize f
+		@file = f
+		p
+		super()
+	end
+	def normalize ln
+		ln
+	end
+	def getForward
+		p @file
+		topen "tail -F #{@file}" do |fio|
+			p fio
+			Fib.get_line fio do |ln|
+				p ln
+				yield ln if normalize(ln)
+			end
+		end
+	end
+	def getNextFile
+		if @file._r?
+			yield @file
+		end
+		if @file.dirname._r?
+			bfs = (f + "-20*").glob.sort_by do |e|
+				if e =~ /\-(\d+)/
+					$1.to_i
+				end
+			end
+			if bfs.size != 0
+				bfs.reverse_each do |b|
+					yield b
+				end
+			else
+				bfs = (f + ".*").glob.sort_by do |e|
+					if e =~ /\-(\d+)/
+						$1.to_i
+					end
+				end
+				bfs.each do |b|
+					yield b
+				end
+			end
+		end
+	end
+	def getBackward
+		firstFile = true
+		lcnt = 0
+		buff = ""
+		yld = Proc.new do |ln|
+			lcnt += 1
+			if !firstFile || lcnt > 10
+				yield ln if normalize(ln)
+			end
+		end
+		getNextFile do |f|
+			begin
+				if f =~ /\.gz$/
+					r, w = IO.pipe
+					pid = fork do
+						r.close
+						"cat #{f}|gunzip".readlines_p.reverse_each do |ln|
+							w.write ln
+						end
+					end
+					w.close
+					Process.detach pid
+					Fib.get_line r do |ln|
+						normalize(ln)
+						yield ln if normalize(ln)
+					end
+				else
+					File.open f do |bio|
+						residue = nil
+						bio.seek 0, IO::SEEK_END
+						loop do
+							rbytes = 1024
+							begin
+								bio.pos -= 1024
+							rescue
+								rbytes = bio.pos
+								bio.pos = 0
+							end
+							Fib.read bio, rbytes, buff
+							p rbytes
+							bio.pos -= rbytes
+							break if bio.pos == 0
+							first = true
+							lns = []
+							n_residue = nil
+							buff.each_line do |ln|
+								if first
+									n_residue = ln
+									first = false
+								else
+									lns.push ln
+								end
+							end
+							if lns[-1][-1] != "\n"
+								lns[-1] += residue
+							else
+								lns.push residue
+							end
+							residue = n_residue
+							lns.reverse_each do |ln|
+								yield ln if normalize(ln)
+							end
+						end
+					end
+				end
+			ensure
+				firstFile = false
+			end
+		end
+	end
+end
+
+
+class AsteriskMaster < FileItem
+	def initialize
+		super "/var/log/asterisk/cdr-csv/Master.csv"
+	end
+	def normalize ln
+		require 'csv'
+		begin
+			edata = CSV.parse(ln)
+		rescue
+			return nil
+		end
+		edata = edata[0]
+		tc1 = edata[5][/((IAX2|PJSIP|Mobile|DAHDI)\/(.*))\-/,1] if edata[5]
+		tc2 = edata[6][/((IAX2|PJSIP|Mobile|DAHDI)\/(.*))\-/,1] if edata[6]
+		return nil if !tc1 && !tc2
+		tc1 &&= "(#{tc1})"
+		tc2 &&= "(#{tc2})"
+		date = Time.parse(edata[9] + " +00:00").localtime.strftime("%b %e %T")
+		if edata[10]
+			t1 = Time.parse(edata[10]) - Time.parse(edata[9])
+		end
+		if edata[11]
+			t2 = Time.parse(edata[11]) - Time.parse(edata[9])
+		end
+		if t1
+			t = "ring:#{t1} sec, answer:#{t2} sec"
+		else
+			t = "ring:#{t2} sec"
+		end
+		state = edata[14]
+		ln.replace "#{date} #{state} #{edata[1]}#{tc1} to #{edata[2]}#{tc2}, #{t}\n"
+	end
+end
+
+
+class DMesgItem < LogItem
+	def getForward
+		set_first_dmsg_line
+		uptime = IO.read('/proc/uptime').split[0].to_f
+		topen "/usr/bin/dmesg -w" do |fio|
+			p fio
+			Fib.get_line fio do |ln|
+				if ln =~ /^\[(.*?)\]/
+					ln.replace((Time.now - uptime + $1.to_f).strftime("%b %e %T.%3N") + " : " + $')
+				end
+				yield ln if normalize(ln)
+			end
+		end
+	end
+	def getBackward
+		"/var/log/dmesg.old"._?._fr?.readline.__it do |old1|
+			if old1 =~ /#{$fdmsg}/
+				cnt = 0
+				obtime = nil
+				MessageItem.emerge.each_log do |ln|
+					if ln =~ /#{$fdmsg}/
+						cnt += 1
+					end
+					if cnt == 2
+						obtime = Time.parse(ln[0..15])
+						break
+					end
+				end
+				if obtime
+					old = "/var/log/dmesg.old".readlines
+					old.reverse_each do |ln|
+						if ln =~ /^\[(.*?)\]/
+							ln.replace((obtime + $1.to_f).strftime("%b %e %T.%3N") + " : " + $')
+						end
+						yield ln
+					end
+				end
+			end
+		end
+	end
+end
+
+
+class MuitiLog < FileItem
+	def initialize dir
+		super dir
+	end
+	def normalize ln
+		if ln =~ /^(\d+\.\d+)(\s)/
+			ln.replace Time.at($1.to_i).strftime("%b %e %T").to_s + $2 + $'
+		end
+		ln
+	end
+	def getForward
+		p @file
+		topen "tail -F #{@file / 'current'}" do |fio|
+			p fio
+			Fib.get_line fio do |ln|
+				p ln
+				yield ln if normalize(ln)
+			end
+		end
+	end
+	def getNextFile
+		yield @file / 'current'
+		files = []
+		@file.entries.each do |f|
+			if f =~ /(\/|^)\@[0-9a-f]{24}\.u$/
+				files.push f
+			end
+		end
+		files.sort_by do |e|
+			getTai64NSec(e)
+		end
+		files.reverse_each do |f|
+			yield f
+		end
+	end
+end
+
+
+SEARCH_PATH = ["/var/log", "/var/service_log", "./"]
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+		  "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+          "Januruary", "February", "March", "April", "May", "June", "July", "August", "September", 
+          "October", "November", "December",
+		  "JANURUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER",
+		  "OCTOBER", "NOVEMBER", "DECEMBER"]
+WDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+		 "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN",
+		 "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+		 "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+		]
+
+
+Thread::abort_on_exception = TRUE
+TFMT = "%a %y-%m-%d %H:%M:%S"
+TFMT_SIZE = "--- -------- --:--:--.---".size
+
+
+def tfmt(t)
+	if t == Time.at(0)
+		return "--- -------- --:--:--.---"
+	elsif t == "same" || t == ""
+		return "                         "
+	end
+	ret = t.strftime(TFMT) + "."
+	us = (t.usec / 1000).to_i.to_s
+	ret += "0" * (3 - us.size) + us
+end
+
+
+def getTai64NSec (d)
+	if d =~ /\@[0-9a-f]{24}/
+		str = $&
+		content = $'
+		sec = str.slice(2, 15)
+		nanosec = str.slice(17..23)
+		if str[1].chr.to_i >= 4
+			sec = (4 - str[1].chr.to_i).to_s + sec
+		end
+		low = sec.slice(8...16).to_i(16)
+		up = sec.slice(0...8).to_i(16)
+		sub = nanosec.to_i(16)
+		Time.at(low - 10, sub.to_f / 1000 * 16)
+	else
+		NIL
+	end
+end
+
+
+class TimeTokenizer
+	Number = 1
+	Month = 2
+	Wday = 3
+	ZDiff = 4
+	Ampm = 5
+	Year = 6
+	ZName = 7
+	class Token
+		attr :tokenizer
+		attr :used
+		attr :kind
+		attr :phrase
+		def setUsed
+			@used = TRUE
+			self
+		end
+		def isUsed?
+			@used 
+		end
+		def initialize (str, leftSepPos, phrasePos, rightSepPos, mode)
+			@str = str
+			@kind = mode
+			@leftSepPos = leftSepPos
+			@rightSepPos = rightSepPos
+			@phrasePos = phrasePos
+			@setUsed = FALSE
+			@phrase = @str[phrasePos...rightSepPos]
+		end
+		def to_s
+			case @kind
+				when Number
+					if phrase.size == 1
+						"0" + phrase
+					else
+						phrase
+					end
+				when Month
+					MONTHS[MONTHS.index(phrase) % 12]
+				when Wday
+					WDAYS[WDAYS.index(phrase) % 7]
+				when Ampm, Year
+					phrase.upcase
+				when ZName
+					if phrase == DZNAME
+						DZDIFF
+					else
+						begin
+							d = DateTime.parse("2000-1-1 1:00 #{phrase}").to_s
+							if d =~ /((\+|\-)\d\d)(\d\d)/
+								"#{$1}:#{$2}"
+							else
+								DZDIFF
+							end
+						rescue
+							DZDIFF
+						end
+					end
+				when ZDiff
+					phrase =~ /^(\+|\-)(\d{1,2})(|:\d\d|\d\d)$/
+					s, h, m = $1, $2, $3
+					if m.size == 3
+						m = m[1..2]
+					end
+					if m.size == 0
+						m = "00"
+					end
+					if h.size < 2
+						h = "0" + h
+					end
+					"#{s}#{h}:#{m}"
+			end
+		end
+		def rightSepToEnd
+			@str[@rightSepPos...@str.size]
+		end
+		def leftSepToEnd
+			@str[@leftSepPos...@str.size]
+		end
+		def startToLeftSep
+			@str[0...@phrasePos]
+		end
+	end
+	def initialize (str)
+		@str = str.clone
+	end
+	def each
+		i = 0
+		leftSepPos = 0
+		phrasePos = NIL
+		while i < @str.size
+			while i < @str.size
+				if !"[(])\t \n\r,".include?(@str[i..i])
+					phrasePos = i
+					break
+				end
+				i += 1
+			end
+			if phrasePos == NIL
+				return
+			end
+			while i < @str.size
+				if "[(])\t \n\r,".include?(@str[i..i])
+					i -= 1
+					break
+				end
+				i += 1
+			end
+			i = rightSepPos = i + 1
+			tokens = Token.createTokens(@str, leftSepPos, phrasePos, rightSepPos)
+			if tokens.size == 0
+				return
+			else
+				tokens.each do |t|
+					yield t
+				end
+			end
+			leftSepPos = rightSepPos
+		end
+	end
+	def reverse_each
+		i = @str.size - 1
+		rightSepPos = NIL
+		while i >= 0
+			if !"[()]\t \n\r,".include?(@str[i..i])
+				rightSepPos = i + 1
+				break
+			end
+			i -= 1
+		end
+		if rightSepPos == NIL
+			return
+		end
+		while i >= 0
+			phrasePos = NIL
+			while i >= 0
+				if "[()]\t \n\r,".include?(@str[i..i])
+					break
+				end
+				i -= 1
+			end
+			phrasePos = i + 1
+			leftSepPos = NIL
+			while i >= 0
+				if !"[()]\t \n\r,".include?(@str[i..i])
+					leftSepPos = i + 1
+					break
+				end
+				i -= 1
+			end
+			if leftSepPos == NIL
+				leftSepPos = phrasePos
+			end
+			tokens = Token.createTokens(@str, leftSepPos, phrasePos, rightSepPos)
+			if tokens.size == 0
+				return
+			else
+				tokens.reverse_each do |t|
+					yield t
+				end
+			end
+			rightSepPos = leftSepPos
+		end
+	end
+	def Token.create (str, leftSepPos, phrasePos, rightSepPos)			
+		case tmp = str[phrasePos ... rightSepPos]
+			when /^(\+|\-)\d{1,2}(|\d\d|:\d\d)$/
+				return Token.new(str, leftSepPos, phrasePos, rightSepPos, ZDiff)
+			when /^(19|20)\d\d$/
+				return Token.new(str, leftSepPos, phrasePos, rightSepPos, Year)
+			when /^\d{1,2}$/
+				return Token.new(str, leftSepPos, phrasePos, rightSepPos, Number)
+			when /^(AM|PM)$/
+				return Token.new(str, leftSepPos, phrasePos, rightSepPos, Ampm)
+			else
+				if MONTHS.include? tmp
+					return Token.new(str, leftSepPos, phrasePos, rightSepPos, Month)
+				elsif WDAYS.include? tmp
+					return Token.new(str, leftSepPos, phrasePos, rightSepPos, Wday)
+				elsif tmp =~ /^(UTC|[A-Z][A-Z]T)$/
+					return Token.new(str, leftSepPos, phrasePos, rightSepPos, ZName)
+				else
+					return NIL
+				end
+		end
+	end
+	def Token.createTokens (str, leftSepPos, phrasePos, rightSepPos)			
+		isPhrase = TRUE
+		phrase = []
+		prevColonPos = phrasePos - 1
+		(phrasePos ... rightSepPos).each do |i|
+			if "-:/".include?(str[i..i])
+				if i == phrasePos || i == rightSepPos - 1 || prevColonPos == i - 1
+					isPhrase = FALSE
+					break
+				end
+				if prevColonPos == phrasePos - 1
+					token = Token.create(str, leftSepPos, phrasePos, i)
+				else
+					token = Token.create(str, prevColonPos, prevColonPos + 1, i)
+				end
+				if token == NIL
+					isPhrase = FALSE
+					break
+				end
+				phrase.push token
+				prevColonPos = i
+			end
+		end
+		if isPhrase
+			if prevColonPos == phrasePos - 1
+				token = Token.create(str, leftSepPos, phrasePos, rightSepPos)
+			else
+				token = Token.create(str, prevColonPos, prevColonPos + 1, rightSepPos)
+			end
+			if token == NIL
+				isPhrase = FALSE
+			else
+				phrase.push token
+			end
+		end
+		if isPhrase
+			return phrase
+		else
+			return []
+		end
+	end
+end
+
+
+def cat (a, b)
+	if b =~ /^[\t ]+/
+		b = $'
+	end
+	if a =~ /\s+$/
+		a = $`
+	end
+	a + " " + b
+end
+
+
+DZNAME = `date +'%Z'`.chomp
+DZDIFF = `date +'%:z'`.chomp
+
+
+def cat2 (a, b)
+	if a =~ /[\,\-\/\:\(\[]+$/
+		a = $`
+	end
+	if b =~ /^[\,\-\/\:\)\]]+/
+		b = $'
+	end
+	cat(a, b)
+end
+
+
+def separateTime (ln, t0 = NIL)
+	content = NIL
+	t = NIL
+	if ln =~ /\d\d\d\d\-\d\d\-\d\dT\d\d:\d\d:\d\d(\.\d+|)(Z|(\+|\-)\d\d:\d\d|)/
+		t = Time.iso8601($&).getlocal
+		content = $` + $'
+	elsif ln =~ /(^|[^\d])((\d{1,2}):(\d\d:(\d\d\.\d+|\d\d)))([^\d]|$)/
+		tzd, tzn, y, mon, wday, ampm = NIL, NIL, NIL, NIL, NIL, NIL
+		y = NIL
+		tms = $2
+		content = $6 + $'
+		if content.size > 0 && ":/-\"\',".include?(content[0..0])
+			content = content[1...content.size]
+		end
+		hour = $3.to_i
+		minSec = $4
+		tmsPM = "#{hour + 12}:#{minSec}"
+		pre = $` + $1
+		if pre.size > 0 && ":/-\"\',".include?(pre[-1..-1])
+			pre = pre[0...pre.size-1]
+		end
+		begin
+			tk = TimeTokenizer.new(content)
+			e = NIL
+			nonTokenDetected = FALSE
+			tk.each do |e|
+				if y == NIL && e.kind == TimeTokenizer::Year
+					y = e.to_s
+				elsif tzd == NIL && e.kind == TimeTokenizer::ZDiff
+					tzd = e.to_s
+				elsif tzn == NIL && e.kind == TimeTokenizer::ZName
+					tzn = e.to_s
+				elsif ampm == NIL && e.kind == TimeTokenizer::Ampm
+					ampm = e.to_s
+				else
+					nonTokenDetected = TRUE
+					content = e.leftSepToEnd
+					break
+				end
+			end
+			if e != NIL && !nonTokenDetected
+				content = e.rightSepToEnd
+			end
+		end
+		rt = TimeTokenizer.new(pre)
+		itemArr = []
+		numArr = []
+		rt.reverse_each do |e|
+			if y == NIL && e.kind == TimeTokenizer::Year
+				itemArr.push e.setUsed
+				y = e.to_s
+			elsif numArr.size < 3 && e.kind == TimeTokenizer::Number
+				itemArr.push e
+				numArr.push e
+			elsif mon == NIL && e.kind == TimeTokenizer::Month
+				itemArr.push e.setUsed
+				mon = e.to_s
+			elsif wday == NIL && e.kind == TimeTokenizer::Wday
+				itemArr.push e.setUsed
+				wday = e.to_s
+			else
+				break
+			end
+		end
+		if tzd == NIL
+			tzd = tzn
+		end
+		if tzd == NIL
+			tzd = ""
+		end
+		if ampm =~ /pm/i
+			tms = tmsPM
+		end
+		if mon == NIL && numArr.size >= 2
+			mon = MONTHS[numArr[1].to_s.to_i - 1]
+			numArr[1].setUsed
+		end
+		if y == NIL && numArr.size >= 3
+			y = numArr[2].to_i
+			if y < (Time.now.year - 2000)
+				y += 2000
+			else
+				y += 1900
+			end
+			y = y.to_s
+			numArr[2].setUsed
+		end
+		if mon == NIL || numArr.size == 0
+			return [ln, Time.at(0)]
+		end
+		numArr[-1].setUsed
+		itemArr.reverse_each do |e|
+			if e.isUsed?
+				pre = e.startToLeftSep
+				break
+			end
+		end
+		if y == NIL
+			if $preTime != NIL
+				y = $preTime.year
+			else
+				y = Time.now.year
+			end
+		end
+		t = Time.parse("#{mon} #{numArr[0]} #{tms} #{tzd} #{y}").getlocal rescue Time.at(0)
+		if t != Time.at(0)
+			if t - Time.now > 6 * 30 * 24 * 3600 || ($preTime != NIL && t - $preTime > 6 * 30 * 24 * 3600)
+				t = Time.parse("#{mon} #{numArr[0]} #{tms} #{tzd} #{y.to_i - 1}").getlocal
+			end
+		end
+		content = cat2(pre, content)
+	else
+		content = ln
+		t = Time.at(0)
+	end
+	if t == Time.at(0) || (t0 != NIL && (t0 - t).abs > 1)
+		content = ln
+	end
+	return [content, t]
+end
+
+
+def convFormat (ln)
+	ln = ln.rstrip
+	content = NIL
+	t = NIL
+	if ln =~ /^\s*(\d\d\d\d\d\d\d\d\d+\.\d\d\d)(\s|$)/
+		t = Time.at($1.to_f)
+		content = $2 + $'
+	elsif ln =~ /^\s*(\@[0-9a-f]{24})(\s|$)/
+		t = getTai64NSec($1)
+		content = $2 + separateTime($', t)[0]
+	elsif ln =~ /(\d\d\d\d\d\d\d\d+\.\d\d\d):\s*/
+		t = Time.at($1.to_f)
+		content = $` + $'
+	else
+		content, t = separateTime(ln)
+	end
+	if content !~ /^(\s|$)/
+		content = " " + content
+	end
+	return [content, t]
+end
+
+
+def main
+	Fib.spawn do
+		whenPath = Proc.new |e|
+			if e._rf?
+				if e.pipe?
+					PipeItem.emerge e.expand_path
+				else
+					FileItem.emerge e.expand_path
+				end
+			elsif (e / "current")._rf?
+				MultiLog.emerge e
+			end
+		end
+		ARGV.each do |e|
+			case e
+			when /^\//, /^\~\//, /^\.+\//
+				whenPath.call e
+			when "audit"
+				AuditItem.emerge
+			when "dmesg"
+				DMesgItem.emerge
+			when "message"
+				MessageItem.emerge
+			when "asterisk.tel"
+				AsteriskMaster.emerge
+			else
+				if (g = "/var/log" / e)._r? || (g = "/var/service_log" / e)._r?
+					whenPath.call g
+				end
+			end
+		end
+		Pane.new LogItem.allLines
+	end
+end
+
